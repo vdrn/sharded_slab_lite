@@ -1,18 +1,18 @@
 [package]
-name = "sharded-slab"
-version = "0.1.7"
-authors = ["Eliza Weisman <eliza@buoyant.io>"]
-edition = "2018"
-documentation = "https://docs.rs/sharded-slab/"
-homepage = "https://github.com/hawkw/sharded-slab"
-repository = "https://github.com/hawkw/sharded-slab"
+name = "sharded_slab_lite"
+version = "0.1.0"
+authors = ["Vedran Maric <valinion@gmail.com>"]
+edition = "2024"
+# documentation = "https://docs.rs/sharded_slab_lite/"
+# homepage = "https://github.com/vdrn/sharded_slab_lite"
+# repository = "https://github.com/vdrn/sharded_slab_lite"
 readme = "README.md"
-rust-version = "1.42.0"
+rust-version = "1.85.0"
 license = "MIT"
 keywords = ["slab", "allocator", "lock-free", "atomic"]
 categories = ["memory-management", "data-structures", "concurrency"]
 description = """
-A lock-free concurrent slab.
+A lock-free concurrent slab. Supports concurrent insertion, but not removal.
 """
 exclude = [
     "flake.nix",

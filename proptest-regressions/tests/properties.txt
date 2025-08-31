@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc df900f55e893879278d2761e07876540a917c55dda0955b9cd460185dacce72a # shrinks to actions = [Action { tid: 1, kind: Insert }, Action { tid: 1, kind: TakeRandom(10985356539034861536) }]
+cc a4b31341d169b5578cbc01f500ebfce7146dc728a0cb20ab587742efb5e7b91c # shrinks to actions = [Action { tid: 3, kind: Insert }, Action { tid: 3, kind: TakeRandom(8739236038985121760) }]

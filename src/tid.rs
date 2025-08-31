@@ -1,11 +1,12 @@
 use crate::{
+    Pack,
     cfg::{self, CfgPrivate},
     page,
     sync::{
+        Mutex,
         atomic::{AtomicUsize, Ordering},
-        lazy_static, thread_local, Mutex,
+        lazy_static, thread_local,
     },
-    Pack,
 };
 use std::{
     cell::{Cell, UnsafeCell},

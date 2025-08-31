@@ -1,7 +1,8 @@
 use crate::{
+    Pack,
     cfg::{self, CfgPrivate},
     clear::Clear,
-    page,
+    page::{self, Addr},
     sync::{
         alloc,
         atomic::{
@@ -10,7 +11,6 @@ use crate::{
         },
     },
     tid::Tid,
-    Pack,
 };
 
 use std::{fmt, ptr, slice};
@@ -67,12 +67,7 @@ impl<T, C> Shard<T, C>
 where
     C: cfg::Config,
 {
-    #[inline(always)]
-    pub(crate) fn with_slot<'a, U>(
-        &'a self,
-        idx: usize,
-        f: impl FnOnce(&'a page::Slot<T, C>) -> Option<U>,
-    ) -> Option<U> {
+    fn get_valid_indices(&self, idx: usize) -> Option<(Addr<C>, usize)> {
         debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
         let (addr, page_index) = page::indices::<C>(idx);
 
@@ -80,8 +75,27 @@ where
         if page_index >= self.shared.len() {
             return None;
         }
+        Some((addr, page_index))
+    }
+    #[inline(always)]
+    pub(crate) fn with_slot<'a, U>(
+        &'a self,
+        idx: usize,
+        f: impl FnOnce(&'a page::Slot<T, C>) -> Option<U>,
+    ) -> Option<U> {
+        let (addr, page_index) = self.get_valid_indices(idx)?;
 
         self.shared[page_index].with_slot(addr, f)
+    }
+    #[inline(always)]
+    pub(crate) fn with_slot_mut<'a, U>(
+        &'a mut self,
+        idx: usize,
+        f: impl FnOnce(&'a mut page::Slot<T, C>) -> Option<U>,
+    ) -> Option<U> {
+        let (addr, page_index) = self.get_valid_indices(idx)?;
+
+        self.shared[page_index].with_slot_mut(addr, f)
     }
 
     pub(crate) fn new(tid: usize) -> Self {
@@ -104,19 +118,20 @@ where
     C: cfg::Config,
 {
     /// Remove an item on the shard's local thread.
-    pub(crate) fn take_local(&self, idx: usize) -> Option<T> {
+    pub(crate) fn take_local(&mut self, idx: usize) -> Option<T> {
         debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
         let (addr, page_index) = page::indices::<C>(idx);
 
         test_println!("-> remove_local {:?}", addr);
 
-        self.shared
-            .get(page_index)?
-            .take(addr, C::unpack_gen(idx), self.local(page_index))
+        self.assert_local();
+
+        let page = self.shared.get_mut(page_index)?;
+        page.take(addr, &self.local[page_index])
     }
 
     /// Remove an item, while on a different thread from the shard's local thread.
-    pub(crate) fn take_remote(&self, idx: usize) -> Option<T> {
+    pub(crate) fn take_remote(&mut self, idx: usize) -> Option<T> {
         debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
         debug_assert!(Tid::<C>::current().as_usize() != self.tid);
 
@@ -124,11 +139,11 @@ where
 
         test_println!("-> take_remote {:?}; page {:?}", addr, page_index);
 
-        let shared = self.shared.get(page_index)?;
-        shared.take(addr, C::unpack_gen(idx), shared.free_list())
+        let shared = self.shared.get_mut(page_index)?;
+        shared.take_remote(addr)
     }
 
-    pub(crate) fn remove_local(&self, idx: usize) -> bool {
+    pub(crate) fn remove_local(&mut self, idx: usize) -> bool {
         debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
         let (addr, page_index) = page::indices::<C>(idx);
 
@@ -136,10 +151,13 @@ where
             return false;
         }
 
-        self.shared[page_index].remove(addr, C::unpack_gen(idx), self.local(page_index))
+        self.assert_local();
+        let free = &self.local[page_index];
+
+        self.shared[page_index].remove(addr, free)
     }
 
-    pub(crate) fn remove_remote(&self, idx: usize) -> bool {
+    pub(crate) fn remove_remote(&mut self, idx: usize) -> bool {
         debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
         let (addr, page_index) = page::indices::<C>(idx);
 
@@ -147,8 +165,8 @@ where
             return false;
         }
 
-        let shared = &self.shared[page_index];
-        shared.remove(addr, C::unpack_gen(idx), shared.free_list())
+        let shared = &mut self.shared[page_index];
+        shared.remove_remote(addr)
     }
 
     pub(crate) fn iter(&self) -> std::slice::Iter<'_, page::Shared<Option<T>, C>> {
@@ -179,66 +197,66 @@ where
         None
     }
 
-    pub(crate) fn mark_clear_local(&self, idx: usize) -> bool {
-        debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
-        let (addr, page_index) = page::indices::<C>(idx);
+    // pub(crate) fn mark_clear_local(&self, idx: usize) -> bool {
+    //     debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
+    //     let (addr, page_index) = page::indices::<C>(idx);
 
-        if page_index >= self.shared.len() {
-            return false;
-        }
+    //     if page_index >= self.shared.len() {
+    //         return false;
+    //     }
 
-        self.shared[page_index].mark_clear(addr, C::unpack_gen(idx), self.local(page_index))
-    }
+    //     self.shared[page_index].mark_clear(addr, C::unpack_gen(idx), self.local(page_index))
+    // }
 
-    pub(crate) fn mark_clear_remote(&self, idx: usize) -> bool {
-        debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
-        let (addr, page_index) = page::indices::<C>(idx);
+    // pub(crate) fn mark_clear_remote(&self, idx: usize) -> bool {
+    //     debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
+    //     let (addr, page_index) = page::indices::<C>(idx);
 
-        if page_index >= self.shared.len() {
-            return false;
-        }
+    //     if page_index >= self.shared.len() {
+    //         return false;
+    //     }
 
-        let shared = &self.shared[page_index];
-        shared.mark_clear(addr, C::unpack_gen(idx), shared.free_list())
-    }
+    //     let shared = &self.shared[page_index];
+    //     shared.mark_clear(addr, C::unpack_gen(idx), shared.free_list())
+    // }
 
-    pub(crate) fn clear_after_release(&self, idx: usize) {
-        crate::sync::atomic::fence(crate::sync::atomic::Ordering::Acquire);
-        let tid = Tid::<C>::current().as_usize();
-        test_println!(
-            "-> clear_after_release; self.tid={:?}; current.tid={:?};",
-            tid,
-            self.tid
-        );
-        if tid == self.tid {
-            self.clear_local(idx);
-        } else {
-            self.clear_remote(idx);
-        }
-    }
+    // pub(crate) fn clear_after_release(&self, idx: usize) {
+    //     crate::sync::atomic::fence(crate::sync::atomic::Ordering::Acquire);
+    //     let tid = Tid::<C>::current().as_usize();
+    //     test_println!(
+    //         "-> clear_after_release; self.tid={:?}; current.tid={:?};",
+    //         tid,
+    //         self.tid
+    //     );
+    //     if tid == self.tid {
+    //         self.clear_local(idx);
+    //     } else {
+    //         self.clear_remote(idx);
+    //     }
+    // }
 
-    fn clear_local(&self, idx: usize) -> bool {
-        debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
-        let (addr, page_index) = page::indices::<C>(idx);
+    // fn clear_local(&self, idx: usize) -> bool {
+    //     debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
+    //     let (addr, page_index) = page::indices::<C>(idx);
 
-        if page_index >= self.shared.len() {
-            return false;
-        }
+    //     if page_index >= self.shared.len() {
+    //         return false;
+    //     }
 
-        self.shared[page_index].clear(addr, C::unpack_gen(idx), self.local(page_index))
-    }
+    //     self.shared[page_index].clear(addr, C::unpack_gen(idx), self.local(page_index))
+    // }
 
-    fn clear_remote(&self, idx: usize) -> bool {
-        debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
-        let (addr, page_index) = page::indices::<C>(idx);
+    // fn clear_remote(&self, idx: usize) -> bool {
+    //     debug_assert_eq_in_drop!(Tid::<C>::from_packed(idx).as_usize(), self.tid);
+    //     let (addr, page_index) = page::indices::<C>(idx);
 
-        if page_index >= self.shared.len() {
-            return false;
-        }
+    //     if page_index >= self.shared.len() {
+    //         return false;
+    //     }
 
-        let shared = &self.shared[page_index];
-        shared.clear(addr, C::unpack_gen(idx), shared.free_list())
-    }
+    //     let shared = &self.shared[page_index];
+    //     shared.clear(addr, C::unpack_gen(idx), shared.free_list())
+    // }
 
     #[inline(always)]
     fn local(&self, i: usize) -> &page::Local {
@@ -250,6 +268,15 @@ where
         );
 
         &self.local[i]
+    }
+    #[inline(always)]
+    fn assert_local(&self) {
+        #[cfg(debug_assertions)]
+        debug_assert_eq_in_drop!(
+            Tid::<C>::current().as_usize(),
+            self.tid,
+            "tried to access local data from another thread!"
+        );
     }
 }
 
@@ -285,6 +312,11 @@ where
     pub(crate) fn get(&self, idx: usize) -> Option<&Shard<T, C>> {
         test_println!("-> get shard={}", idx);
         self.shards.get(idx)?.load(Acquire)
+    }
+    #[inline]
+    pub(crate) fn get_mut(&mut self, idx: usize) -> Option<&mut Shard<T, C>> {
+        test_println!("-> get shard={}", idx);
+        self.shards.get_mut(idx)?.get_mut()
     }
 
     #[inline]
@@ -396,6 +428,28 @@ impl<T, C: cfg::Config> Ptr<T, C> {
         };
 
         Some(track.get_ref())
+    }
+    #[inline]
+    fn get_mut(&mut self) -> Option<&mut Shard<T, C>> {
+        let ptr = *self.0.get_mut();
+        test_println!("---> loaded_mut={:p}", ptr);
+        if ptr.is_null() {
+            test_println!("---> null");
+            return None;
+        }
+        let track = unsafe {
+            // Safety: The returned reference will have the same lifetime as the
+            // reference to the shard pointer, which (morally, if not actually)
+            // owns the shard. The shard is only deallocated when the shard
+            // array is dropped, and it won't be dropped while this pointer is
+            // borrowed --- and the returned reference has the same lifetime.
+            //
+            // We know that the pointer is not null, because we just
+            // null-checked it immediately prior.
+            &mut *ptr
+        };
+
+        Some(track.get_mut())
     }
 
     #[inline]

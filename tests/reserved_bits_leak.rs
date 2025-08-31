@@ -1,7 +1,7 @@
 // Reproduces https://github.com/hawkw/sharded-slab/issues/83
 use memory_stats::memory_stats;
-use sharded_slab::Config;
-use sharded_slab::Slab;
+use sharded_slab_lite::Config;
+use sharded_slab_lite::Slab;
 
 struct CustomConfig;
 impl Config for CustomConfig {
@@ -10,7 +10,7 @@ impl Config for CustomConfig {
 
 #[test]
 fn reserved_bits_doesnt_leak() {
-    let slab = Slab::new_with_config::<CustomConfig>();
+    let mut slab = Slab::new_with_config::<CustomConfig>();
     for n in 0..1000 {
         let mem_before = memory_stats().unwrap();
         let key = slab.insert(0).unwrap();

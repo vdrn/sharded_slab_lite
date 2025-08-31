@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::{
     sync::{Arc, Barrier, RwLock},
     thread,
@@ -50,46 +50,46 @@ fn insert_remove_local(c: &mut Criterion) {
     let g = group.measurement_time(Duration::from_secs(15));
 
     for i in N_INSERTIONS {
-        g.bench_with_input(BenchmarkId::new("sharded_slab", i), i, |b, &i| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::from_secs(0);
-                for _ in 0..iters {
-                    let bench = MultithreadedBench::new(Arc::new(sharded_slab::Slab::new()));
-                    let elapsed = bench
-                        .thread(move |start, slab| {
-                            start.wait();
-                            let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
-                            for i in v {
-                                slab.remove(i);
-                            }
-                        })
-                        .thread(move |start, slab| {
-                            start.wait();
-                            let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
-                            for i in v {
-                                slab.remove(i);
-                            }
-                        })
-                        .thread(move |start, slab| {
-                            start.wait();
-                            let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
-                            for i in v {
-                                slab.remove(i);
-                            }
-                        })
-                        .thread(move |start, slab| {
-                            start.wait();
-                            let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
-                            for i in v {
-                                slab.remove(i);
-                            }
-                        })
-                        .run();
-                    total += elapsed;
-                }
-                total
-            })
-        });
+        // g.bench_with_input(BenchmarkId::new("sharded_slab", i), i, |b, &i| {
+        //     b.iter_custom(|iters| {
+        //         let mut total = Duration::from_secs(0);
+        //         for _ in 0..iters {
+        //             let bench = MultithreadedBench::new(Arc::new(sharded_slab::Slab::new()));
+        //             let elapsed = bench
+        //                 .thread(move |start, slab| {
+        //                     start.wait();
+        //                     let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
+        //                     for i in v {
+        //                         slab.remove(i);
+        //                     }
+        //                 })
+        //                 .thread(move |start, slab| {
+        //                     start.wait();
+        //                     let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
+        //                     for i in v {
+        //                         slab.remove(i);
+        //                     }
+        //                 })
+        //                 .thread(move |start, slab| {
+        //                     start.wait();
+        //                     let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
+        //                     for i in v {
+        //                         slab.remove(i);
+        //                     }
+        //                 })
+        //                 .thread(move |start, slab| {
+        //                     start.wait();
+        //                     let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
+        //                     for i in v {
+        //                         slab.remove(i);
+        //                     }
+        //                 })
+        //                 .run();
+        //             total += elapsed;
+        //         }
+        //         total
+        //     })
+        // });
         g.bench_with_input(BenchmarkId::new("slab_biglock", i), i, |b, &i| {
             b.iter_custom(|iters| {
                 let mut total = Duration::from_secs(0);
@@ -146,7 +146,7 @@ fn insert_remove_single_thread(c: &mut Criterion) {
 
     for i in N_INSERTIONS {
         group.bench_with_input(BenchmarkId::new("sharded_slab", i), i, |b, &i| {
-            let slab = sharded_slab::Slab::new();
+            let mut slab = sharded_slab_lite::Slab::new();
             b.iter(|| {
                 let v: Vec<_> = (0..i).map(|i| slab.insert(i).unwrap()).collect();
                 for i in v {

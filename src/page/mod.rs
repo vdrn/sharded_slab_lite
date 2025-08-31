@@ -1,7 +1,7 @@
+use crate::Pack;
 use crate::cfg::{self, CfgPrivate};
 use crate::clear::Clear;
 use crate::sync::UnsafeCell;
-use crate::Pack;
 
 pub(crate) mod slot;
 mod stack;
@@ -189,10 +189,19 @@ where
             f(slot)
         })
     }
+    #[inline]
+    pub(crate) fn with_slot_mut<'a, U>(
+        &'a mut self,
+        addr: Addr<C>,
+        f: impl FnOnce(&'a mut Slot<T, C>) -> Option<U>,
+    ) -> Option<U> {
+        let poff = addr.offset() - self.prev_sz;
 
-    #[inline(always)]
-    pub(crate) fn free_list(&self) -> &impl FreeList<C> {
-        &self.remote
+        test_println!("-> offset {:?}", poff);
+
+        let slab = self.slab.get_mut().as_mut()?;
+        let slot = slab.get_mut(poff)?;
+        f(slot)
     }
 }
 
@@ -200,12 +209,17 @@ impl<'a, T, C> Shared<Option<T>, C>
 where
     C: cfg::Config + 'a,
 {
-    pub(crate) fn take<F>(
-        &self,
-        addr: Addr<C>,
-        gen: slot::Generation<C>,
-        free_list: &F,
-    ) -> Option<T>
+    pub(crate) fn take_remote(&mut self, addr: Addr<C>) -> Option<T> {
+        let free_list = &self.remote;
+        let offset = addr.offset() - self.prev_sz;
+
+        test_println!("-> take: offset {:?}", offset);
+
+        let slab = self.slab.get_mut().as_mut()?;
+        let slot = slab.get_mut(offset)?;
+        slot.remove_value(offset, free_list)
+    }
+    pub(crate) fn take<F>(&mut self, addr: Addr<C>, free_list: &F) -> Option<T>
     where
         F: FreeList<C>,
     {
@@ -213,31 +227,41 @@ where
 
         test_println!("-> take: offset {:?}", offset);
 
-        self.slab.with(|slab| {
-            let slab = unsafe { &*slab }.as_ref()?;
-            let slot = slab.get(offset)?;
-            slot.remove_value(gen, offset, free_list)
-        })
+        let slab = self.slab.get_mut().as_mut()?;
+        let slot = slab.get_mut(offset)?;
+        slot.remove_value(offset, free_list)
     }
 
-    pub(crate) fn remove<F: FreeList<C>>(
-        &self,
-        addr: Addr<C>,
-        gen: slot::Generation<C>,
-        free_list: &F,
-    ) -> bool {
+    pub(crate) fn remove_remote(&mut self, addr: Addr<C>) -> bool {
+        let offset = addr.offset() - self.prev_sz;
+        let free_list = &self.remote;
+
+        test_println!("-> offset {:?}", offset);
+        if let Some(slot) = self
+            .slab
+            .get_mut()
+            .as_mut()
+            .and_then(|slab| slab.get_mut(offset))
+        {
+            slot.remove_value(offset, free_list).is_some()
+        } else {
+            false
+        }
+    }
+    pub(crate) fn remove<F: FreeList<C>>(&mut self, addr: Addr<C>, free_list: &F) -> bool {
         let offset = addr.offset() - self.prev_sz;
 
         test_println!("-> offset {:?}", offset);
-
-        self.slab.with(|slab| {
-            let slab = unsafe { &*slab }.as_ref();
-            if let Some(slot) = slab.and_then(|slab| slab.get(offset)) {
-                slot.try_remove_value(gen, offset, free_list)
-            } else {
-                false
-            }
-        })
+        if let Some(slot) = self
+            .slab
+            .get_mut()
+            .as_mut()
+            .and_then(|slab| slab.get_mut(offset))
+        {
+            slot.remove_value(offset, free_list).is_some()
+        } else {
+            false
+        }
     }
 
     // Need this function separately, as we need to pass a function pointer to `filter_map` and
@@ -305,46 +329,6 @@ where
                 *s = Some(slab.into_boxed_slice());
             }
         });
-    }
-
-    pub(crate) fn mark_clear<F: FreeList<C>>(
-        &self,
-        addr: Addr<C>,
-        gen: slot::Generation<C>,
-        free_list: &F,
-    ) -> bool {
-        let offset = addr.offset() - self.prev_sz;
-
-        test_println!("-> offset {:?}", offset);
-
-        self.slab.with(|slab| {
-            let slab = unsafe { &*slab }.as_ref();
-            if let Some(slot) = slab.and_then(|slab| slab.get(offset)) {
-                slot.try_clear_storage(gen, offset, free_list)
-            } else {
-                false
-            }
-        })
-    }
-
-    pub(crate) fn clear<F: FreeList<C>>(
-        &self,
-        addr: Addr<C>,
-        gen: slot::Generation<C>,
-        free_list: &F,
-    ) -> bool {
-        let offset = addr.offset() - self.prev_sz;
-
-        test_println!("-> offset {:?}", offset);
-
-        self.slab.with(|slab| {
-            let slab = unsafe { &*slab }.as_ref();
-            if let Some(slot) = slab.and_then(|slab| slab.get(offset)) {
-                slot.clear_storage(gen, offset, free_list)
-            } else {
-                false
-            }
-        })
     }
 }
 
@@ -428,22 +412,22 @@ mod test {
             assert_eq!(addr, Addr::from_packed(packed));
         }
         #[test]
-        fn gen_roundtrips(gen in 0usize..slot::Generation::<cfg::DefaultConfig>::BITS) {
-            let gen = slot::Generation::<cfg::DefaultConfig>::from_usize(gen);
-            let packed = gen.pack(0);
-            assert_eq!(gen, slot::Generation::from_packed(packed));
+        fn gen_roundtrips(generation in 0usize..slot::Generation::<cfg::DefaultConfig>::BITS) {
+            let generation = slot::Generation::<cfg::DefaultConfig>::from_usize(generation);
+            let packed = generation.pack(0);
+            assert_eq!(generation, slot::Generation::from_packed(packed));
         }
 
         #[test]
         fn page_roundtrips(
-            gen in 0usize..slot::Generation::<cfg::DefaultConfig>::BITS,
+            generation in 0usize..slot::Generation::<cfg::DefaultConfig>::BITS,
             addr in 0usize..Addr::<cfg::DefaultConfig>::BITS,
         ) {
-            let gen = slot::Generation::<cfg::DefaultConfig>::from_usize(gen);
+            let generation = slot::Generation::<cfg::DefaultConfig>::from_usize(generation);
             let addr = Addr::<cfg::DefaultConfig>::from_usize(addr);
-            let packed = gen.pack(addr.pack(0));
+            let packed = generation.pack(addr.pack(0));
             assert_eq!(addr, Addr::from_packed(packed));
-            assert_eq!(gen, slot::Generation::from_packed(packed));
+            assert_eq!(generation, slot::Generation::from_packed(packed));
         }
     }
 }

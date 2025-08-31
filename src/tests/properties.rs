@@ -9,12 +9,12 @@
 //! The test is supposed to be deterministic, so it doesn't spawn real threads
 //! and uses `tid::with()` to override the TID for the current thread.
 
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 use indexmap::IndexMap;
 use proptest::prelude::*;
 
-use crate::{tid, Config, DefaultConfig, Slab};
+use crate::{Config, DefaultConfig, Slab, tid};
 
 const THREADS: Range<usize> = 1..4;
 const ACTIONS: Range<usize> = 1..1000;
@@ -119,7 +119,7 @@ fn used_bits<C: Config>(key: usize) -> usize {
 }
 
 fn apply_action<C: Config>(
-    slab: &Arc<Slab<u32, C>>,
+    slab: &mut Slab<u32, C>,
     active: &mut Active,
     action: ActionKind,
 ) -> Result<(), TestCaseError> {
@@ -164,16 +164,11 @@ fn apply_action<C: Config>(
             let used_key = used_bits::<C>(key);
             prop_assert_eq!(slab.get(key).map(|e| *e), slab.get(used_key).map(|e| *e));
             prop_assert_eq!(slab.get(key).map(|e| *e), active.get(used_key));
-            prop_assert_eq!(
-                slab.clone().get_owned(key).map(|e| *e),
-                active.get(used_key)
-            );
         }
         ActionKind::GetExistent(seed) => {
             if let Some((key, value)) = active.get_any(seed) {
                 prop_assert!(slab.contains(key));
                 prop_assert_eq!(slab.get(key).map(|e| *e), Some(value));
-                prop_assert_eq!(slab.clone().get_owned(key).map(|e| *e), Some(value));
             }
         }
     }
@@ -182,7 +177,7 @@ fn apply_action<C: Config>(
 }
 
 fn run<C: Config>(actions: Vec<Action>) -> Result<(), TestCaseError> {
-    let mut slab = Arc::new(Slab::new_with_config::<C>());
+    let mut slab = Slab::new_with_config::<C>();
     let mut active = Active::default();
 
     // Apply all actions.
@@ -191,7 +186,7 @@ fn run<C: Config>(actions: Vec<Action>) -> Result<(), TestCaseError> {
         // to preserve determinism. We're not checking concurrency issues here, they should be
         // covered by loom tests anyway. Thus, it's fine to run all actions consequently.
         tid::with(action.tid, || {
-            apply_action::<C>(&slab, &mut active, action.kind)
+            apply_action::<C>(&mut slab, &mut active, action.kind)
         })?;
     }
 
@@ -200,13 +195,11 @@ fn run<C: Config>(actions: Vec<Action>) -> Result<(), TestCaseError> {
     for (key, value) in active.drain() {
         prop_assert!(slab.contains(key));
         prop_assert_eq!(slab.get(key).map(|e| *e), Some(value));
-        prop_assert_eq!(slab.clone().get_owned(key).map(|e| *e), Some(value));
         expected_values.push(value);
     }
     expected_values.sort();
 
     // Ensure `unique_iter()` returns all remaining entries.
-    let slab = Arc::get_mut(&mut slab).unwrap();
     let mut actual_values = slab.unique_iter().copied().collect::<Vec<_>>();
     actual_values.sort();
     prop_assert_eq!(actual_values, expected_values);

@@ -1,7 +1,7 @@
 //! Ensures that a custom config behaves as the default config, until limits are reached.
 //! Prevents regression after #80.
 
-use crate::{cfg::CfgPrivate, Config, Slab};
+use crate::{Config, Slab, cfg::CfgPrivate};
 
 struct CustomConfig;
 
@@ -39,8 +39,8 @@ fn slab_eq(mut lhs: Slab<u64, impl Config>, mut rhs: Slab<u64, impl Config>) {
 fn insert_remove() {
     eprintln!("bits={}; config={:#?}", usize::BITS, CustomConfig::debug());
 
-    let default_slab = Slab::<u64, _>::new();
-    let custom_slab = Slab::<u64, _>::new_with_config::<CustomConfig>();
+    let mut default_slab = Slab::<u64, _>::new();
+    let mut custom_slab = Slab::<u64, _>::new_with_config::<CustomConfig>();
 
     for i in 0..=ITERS {
         let idx = default_slab.insert(i).unwrap();
@@ -59,8 +59,8 @@ fn insert_remove() {
 fn double_get() {
     eprintln!("bits={}; config={:#?}", usize::BITS, CustomConfig::debug());
 
-    let default_slab = Slab::<u64, _>::new();
-    let custom_slab = Slab::<u64, _>::new_with_config::<CustomConfig>();
+    let mut default_slab = Slab::<u64, _>::new();
+    let mut custom_slab = Slab::<u64, _>::new_with_config::<CustomConfig>();
 
     for i in 0..=ITERS {
         let idx = default_slab.insert(i).unwrap();

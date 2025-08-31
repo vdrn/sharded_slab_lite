@@ -1,8 +1,8 @@
-use crate::page::{
-    slot::{Generation, RefCount},
-    Addr,
-};
 use crate::Pack;
+use crate::page::{
+    Addr,
+    slot::{Generation, RefCount},
+};
 use std::{fmt, marker::PhantomData};
 /// Configuration parameters which can be overridden to tune the behavior of a slab.
 pub trait Config: Sized {
@@ -105,11 +105,6 @@ pub(crate) trait CfgPrivate: Config {
     fn unpack_tid(packed: usize) -> crate::Tid<Self> {
         Self::unpack(packed)
     }
-
-    #[inline(always)]
-    fn unpack_gen(packed: usize) -> Generation<Self> {
-        Self::unpack(packed)
-    }
 }
 impl<C: Config> CfgPrivate for C {}
 
@@ -168,8 +163,8 @@ impl<C: Config> fmt::Debug for DebugConfig<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util;
     use crate::Slab;
+    use crate::test_util;
 
     #[test]
     #[cfg_attr(loom, ignore)]
@@ -197,7 +192,7 @@ mod tests {
         for i in 0..10000 {
             println!("{:?}", i);
             let k = slab.insert(i).expect("insert");
-            assert_eq!(slab.get(k).expect("get"), i);
+            assert_eq!(*slab.get(k).expect("get"), i);
         }
     }
 
@@ -209,7 +204,7 @@ mod tests {
         for i in 0..4096 {
             println!("{}", i);
             let k = slab.insert(i).expect("insert");
-            assert_eq!(slab.get(k).expect("get"), i);
+            assert_eq!(*slab.get(k).expect("get"), i);
         }
     }
 }
